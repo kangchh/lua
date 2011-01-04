@@ -40,14 +40,6 @@
 */
 
 
-/* chain list of long jump buffers */
-struct lua_longjmp {
-  struct lua_longjmp *previous;
-  luai_jmpbuf b;
-  volatile int status;  /* error code */
-};
-
-
 void luaD_seterrorobj (lua_State *L, int errcode, StkId oldtop) {
   switch (errcode) {
     case LUA_ERRMEM: {
@@ -90,8 +82,20 @@ static void resetstack (lua_State *L, int status) {
   L->errorJmp = NULL;
 }
 
+void luaD_freefstack (lua_State *L) {
+  struct lua_longjmp *pj, *pprev;
+  /* free fstack */
+  pj = L->fstack;
+  while(pj) {
+    pprev = pj->previous;
+    luaM_free(L, pj);
+    pj = pprev;
+  }
+  L->fstack = NULL;
+}
 
 void luaD_throw (lua_State *L, int errcode) {
+  luaD_freefstack(L); /* error on error, free all _finally_ stack */
   if (L->errorJmp) {
     L->errorJmp->status = errcode;
     LUAI_THROW(L, L->errorJmp);
@@ -110,6 +114,7 @@ void luaD_throw (lua_State *L, int errcode) {
 
 int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   struct lua_longjmp lj;
+  lj.type = JMPTYPE_LONGJMP;
   lj.status = 0;
   lj.previous = L->errorJmp;  /* chain new error handler */
   L->errorJmp = &lj;

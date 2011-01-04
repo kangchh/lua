@@ -25,12 +25,14 @@ enum RESERVED {
   /* terminal symbols denoted by reserved words */
   TK_AND = FIRST_RESERVED,
   TK_BREAK,
+  TK_CATCH,
   TK_DO,
   TK_ELSE,
   TK_ELSEIF,
   TK_END,
   TK_FALSE,
   TK_FINALIZE,
+  TK_FINALLY,
   TK_FOR,
   TK_FUNCTION,
   TK_GUARD,
@@ -44,6 +46,7 @@ enum RESERVED {
   TK_RETURN,
   TK_THEN,
   TK_TRUE,
+  TK_TRY,
   TK_UNTIL,
   TK_WHILE,
   /* other terminal symbols */
