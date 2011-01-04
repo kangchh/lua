@@ -291,7 +291,7 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
     ci->top = L->base + p->maxstacksize;
     lua_assert(ci->top <= L->stack_last);
     L->savedpc = p->code;  /* starting point */
-    ci->tailcalls = 0;
+    ci->actresults = ci->tailcalls = 0;
     ci->nresults = nresults;
     for (st = L->top; st < ci->top; st++)
       setnilvalue(st);
@@ -360,6 +360,42 @@ int luaD_poscall (lua_State *L, StkId firstResult) {
 }
 
 
+void luaD_tryreturn (lua_State *L, StkId ra, int b) {
+  GCObject *up;
+  int wanted = L->ci->nresults;
+  int actresults = cast_int(L->top-ra);
+  int a;
+  StkId base;
+  if (b != 0) /* returning less than are on stack? */
+    actresults = b-1;
+  if (wanted >= 0 && wanted < actresults)
+    actresults = wanted; /* caller wants less results? */
+  if (!actresults) return;
+  a = cast_int(ra-L->base);
+  luaD_checkstack(L, actresults);
+  /* move existing stack up, and place returns  */
+  /* just after where the varargs currently sit */
+  base = L->base;
+  for (up = L->openupval; up != NULL; up = up->gch.next) {
+    if (gco2uv(up)->v < base) break;
+    gco2uv(up)->v += actresults;
+  }
+  memmove(base + actresults, base, sizeof(TValue)*(L->top-base));
+  memcpy(base, base + actresults + a, sizeof(TValue)*actresults);
+  L->ci->base = L->base = base + actresults;
+  L->top = (L->ci->top += actresults);
+  L->ci->actresults = actresults;
+}
+
+
+void cstackoverflow (lua_State *L) {
+  if (L->nCcalls == LUAI_MAXCCALLS)
+    luaG_runerror(L, "C stack overflow");
+  else if (L->nCcalls >= (LUAI_MAXCCALLS + (LUAI_MAXCCALLS>>3)))
+    luaD_throw(L, LUA_ERRERR);  /* error while handing stack error */
+}
+
+
 /*
 ** Call a function (C or Lua). The function to be called is at *func.
 ** The arguments are on the stack, right after the function.
@@ -367,16 +403,20 @@ int luaD_poscall (lua_State *L, StkId firstResult) {
 ** function position.
 */ 
 void luaD_call (lua_State *L, StkId func, int nResults) {
-  if (++L->nCcalls >= LUAI_MAXCCALLS) {
-    if (L->nCcalls == LUAI_MAXCCALLS)
-      luaG_runerror(L, "C stack overflow");
-    else if (L->nCcalls >= (LUAI_MAXCCALLS + (LUAI_MAXCCALLS>>3)))
-      luaD_throw(L, LUA_ERRERR);  /* error while handing stack error */
-  }
+  if (++L->nCcalls >= LUAI_MAXCCALLS)
+    cstackoverflow(L);
   if (luaD_precall(L, func, nResults) == PCRLUA)  /* is a Lua function? */
     luaV_execute(L, 1);  /* call it */
   L->nCcalls--;
   luaC_checkGC(L);
+}
+
+
+void luaD_tryenter (lua_State *L, void *ud) {
+  if (++L->nCcalls >= LUAI_MAXCCALLS)
+    cstackoverflow(L);
+  luaV_execute(L, 1);
+  L->nCcalls--;
 }
 
 
@@ -457,16 +497,20 @@ int luaD_pcall (lua_State *L, Pfunc func, void *u,
   int status;
   unsigned short oldnCcalls = L->nCcalls;
   ptrdiff_t old_ci = saveci(L, L->ci);
+  lu_byte oldactresults = L->ci->actresults;
   lu_byte old_allowhooks = L->allowhook;
   ptrdiff_t old_errfunc = L->errfunc;
   L->errfunc = ef;
   status = luaD_rawrunprotected(L, func, u);
   if (status != 0) {  /* an error occurred? */
+    CallInfo *oldci = restoreci(L, old_ci);
     StkId oldtop = restorestack(L, old_top);
+    if ((func == &luaD_tryenter) && (!ci_func(oldci)->c.isC))
+      oldtop += oldci->actresults - oldactresults;
     luaF_close(L, oldtop);  /* close eventual pending closures */
     luaD_seterrorobj(L, status, oldtop);
     L->nCcalls = oldnCcalls;
-    L->ci = restoreci(L, old_ci);
+    L->ci = oldci;
     L->base = L->ci->base;
     L->savedpc = L->ci->savedpc;
     L->allowhook = old_allowhooks;

@@ -51,6 +51,7 @@ typedef struct CallInfo {
   StkId	top;  /* top for this function */
   const Instruction *savedpc;
   int nresults;  /* expected number of results from this function */
+  int actresults; /* number of returned values (for finalizers) */
   int tailcalls;  /* number of tail calls lost under this entry */
 } CallInfo;
 

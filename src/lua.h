@@ -81,6 +81,11 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 #define LUA_TUSERDATA		7
 #define LUA_TTHREAD		8
 
+/* finalizers store flow control information on the stack
+** in the form of lightuserdata. If prefered, the tag can
+** be set as LUA_TNUMBER to prevent a way of generating lightuserdata
+** from within lua (via inspecting the stack) */
+#define LUA_TTRYFLOW        (LUA_TLIGHTUSERDATA)
 
 
 /* minimum Lua stack available to a C function */

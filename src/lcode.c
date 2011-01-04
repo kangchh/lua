@@ -66,8 +66,8 @@ int luaK_jump (FuncState *fs) {
 }
 
 
-void luaK_ret (FuncState *fs, int first, int nret) {
-  luaK_codeABC(fs, OP_RETURN, first, nret+1, 0);
+void luaK_ret (FuncState *fs, int first, int nret, int opcode) {
+  luaK_codeABC(fs, opcode, first, nret+1, 0);
 }
 
 
@@ -79,10 +79,19 @@ static int condjump (FuncState *fs, OpCode op, int A, int B, int C) {
 
 static void fixjump (FuncState *fs, int pc, int dest) {
   Instruction *jmp = &fs->f->code[pc];
-  int offset = dest-(pc+1);
+  int offset;
+  if (GET_OPCODE(*jmp) == NUM_OPCODES) {
+	TValue o; /* convert jump to a LOADK to set flow */
+	o.tt = LUA_TTRYFLOW;
+	o.value.p = cast(void *, dest-(fs->f->lineinfo[pc]+1));
+	fs->f->lineinfo[pc] = fs->f->lineinfo[pc+1]; /* correct line number */
+	*jmp = CREATE_ABx(OP_LOADK, GETARG_A(*jmp), addk(fs, &o, &o));
+	return;
+  }
+  offset = dest-(pc+1);
   lua_assert(dest != NO_JUMP);
   if (abs(offset) > MAXARG_sBx)
-    luaX_syntaxerror(fs->ls, "control structure too long");
+	luaX_syntaxerror(fs->ls, "control structure too long");
   SETARG_sBx(*jmp, offset);
 }
 
@@ -818,8 +827,8 @@ int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
 
 
 int luaK_codeABx (FuncState *fs, OpCode o, int a, unsigned int bc) {
-  lua_assert(getOpMode(o) == iABx || getOpMode(o) == iAsBx);
-  lua_assert(getCMode(o) == OpArgN);
+  lua_assert(o == NUM_OPCODES || getOpMode(o) == iABx || getOpMode(o) == iAsBx);
+  lua_assert(o == NUM_OPCODES || getCMode(o) == OpArgN);
   return luaK_code(fs, CREATE_ABx(o, a, bc), fs->ls->lastline);
 }
 
