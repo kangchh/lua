@@ -358,6 +358,15 @@ LUA_API const char *lua_tolstring (lua_State *L, int idx, size_t *len) {
 }
 
 
+LUA_API const void *lua_torawstring (lua_State *L, int idx) {
+	StkId o = index2adr(L, idx);
+	if (!!ttisstring(o)) {
+		return rawtsvalue(o);
+	}
+	return NULL;
+}
+
+
 LUA_API size_t lua_objlen (lua_State *L, int idx) {
   StkId o = index2adr(L, idx);
   switch (ttype(o)) {
@@ -446,6 +455,14 @@ LUA_API void lua_pushlstring (lua_State *L, const char *s, size_t len) {
   lua_lock(L);
   luaC_checkGC(L);
   setsvalue2s(L, L->top, luaS_newlstr(L, s, len));
+  api_incr_top(L);
+  lua_unlock(L);
+}
+
+
+LUA_API void lua_pushrawstring (lua_State *L, const void *p) {
+  lua_lock(L);
+  setsvalue2s(L, L->top, p);
   api_incr_top(L);
   lua_unlock(L);
 }

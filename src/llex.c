@@ -352,6 +352,12 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             continue;
           }
         }
+#if defined(NX_DEVELOP) || defined(NX_DEBUG)
+        if (ls->current == '@') {
+          next(ls);
+          continue;
+        }
+#endif
         /* else short comment */
         while (!currIsNewline(ls) && ls->current != EOZ)
           next(ls);

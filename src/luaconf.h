@@ -712,7 +712,9 @@ union luai_Cast { double l_d; long l_l; };
 ** CHANGE (define) this if you really need that. This value must be
 ** a multiple of the maximum alignment required for your machine.
 */
+#ifndef LUAI_EXTRASPACE
 #define LUAI_EXTRASPACE		0
+#endif
 
 
 /*
@@ -720,12 +722,14 @@ union luai_Cast { double l_d; long l_l; };
 ** CHANGE them if you defined LUAI_EXTRASPACE and need to do something
 ** extra when a thread is created/deleted/resumed/yielded.
 */
+#ifndef luai_userstateopen
 #define luai_userstateopen(L)		((void)L)
 #define luai_userstateclose(L)		((void)L)
 #define luai_userstatethread(L,L1)	((void)L)
 #define luai_userstatefree(L)		((void)L)
 #define luai_userstateresume(L,n)	((void)L)
 #define luai_userstateyield(L,n)	((void)L)
+#endif
 
 
 /*
