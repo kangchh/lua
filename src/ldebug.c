@@ -292,6 +292,8 @@ int luaG_checkopenop (Instruction i) {
     case OP_CALL:
     case OP_TAILCALL:
     case OP_RETURN:
+    case OP_LOADK: /* unfortunately loadk can occur between a vararg exp */
+    case OP_TRYRETURN: /* and a tryreturn. */
     case OP_SETLIST: {
       check(GETARG_B(i) == 0);
       return 1;

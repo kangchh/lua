@@ -51,6 +51,10 @@ const char *const luaP_opnames[NUM_OPCODES+1] = {
   "SETLIST",
   "CLOSE",
   "CLOSURE",
+  "TRYENTER",
+  "TRYRETURN",
+  "TRYRESUME",
+  "TRYCLOSE",
   "VARARG",
   NULL
 };
@@ -97,6 +101,10 @@ const lu_byte luaP_opmodes[NUM_OPCODES] = {
  ,opmode(0, 0, OpArgU, OpArgU, iABC)		/* OP_SETLIST */
  ,opmode(0, 0, OpArgN, OpArgN, iABC)		/* OP_CLOSE */
  ,opmode(0, 1, OpArgU, OpArgN, iABx)		/* OP_CLOSURE */
+ ,opmode(0, 1, OpArgU, OpArgN, iAsBx)       /* OP_TRYENTER */
+ ,opmode(0, 1, OpArgU, OpArgU, iABC)        /* OP_TRYRETURN */
+ ,opmode(0, 1, OpArgU, OpArgN, iAsBx)       /* OP_TRYRESUME */
+ ,opmode(0, 0, OpArgN, OpArgN, iABC)        /* OP_TRYCLOSE */
  ,opmode(0, 1, OpArgU, OpArgN, iABC)		/* OP_VARARG */
 };
 

@@ -39,12 +39,23 @@
 */
 typedef struct BlockCnt {
   struct BlockCnt *previous;  /* chain */
+  struct GuardControl *gc;
   int breaklist;  /* list of jumps out of this loop */
   lu_byte nactvar;  /* # active locals outside the breakable structure */
   lu_byte upval;  /* true if some variable in the block is an upvalue */
   lu_byte isbreakable;  /* true if `block' is a loop */
 } BlockCnt;
 
+static void g_setresume (FuncState *fs, struct GuardControl *gc, int *list);
+struct GuardControl {
+  int statereg;     /* first register saving the state */
+  int pcresume;     /* pc of the TRYRESUME opcode */
+  int jdobreak;     /* list of jumps to the -actual- break */
+  int jdoreturn;    /* list of jumps to the -actual- return */
+  lu_byte isguard;  /* is it a guard or a finalize? */
+  lu_byte inguard;  /* if in guard, cannot return or break */
+  BlockCnt bl;
+};
 
 
 /*
@@ -288,6 +299,7 @@ static void enterblock (FuncState *fs, BlockCnt *bl, lu_byte isbreakable) {
   bl->nactvar = fs->nactvar;
   bl->upval = 0;
   bl->previous = fs->bl;
+  bl->gc = NULL;
   fs->bl = bl;
   lua_assert(fs->freereg == fs->nactvar);
 }
@@ -358,7 +370,7 @@ static void close_func (LexState *ls) {
   FuncState *fs = ls->fs;
   Proto *f = fs->f;
   removevars(ls, 0);
-  luaK_ret(fs, 0, 0);  /* final return */
+  luaK_ret(fs, 0, 0, OP_RETURN);  /* final return */
   luaM_reallocvector(L, f->code, f->sizecode, fs->pc, Instruction);
   f->sizecode = fs->pc;
   luaM_reallocvector(L, f->lineinfo, f->sizelineinfo, fs->pc, int);
@@ -974,13 +986,28 @@ static int cond (LexState *ls) {
 
 static void breakstat (LexState *ls) {
   FuncState *fs = ls->fs;
-  BlockCnt *bl = fs->bl;
+  BlockCnt *bl = fs->bl, *loop;
   int upval = 0;
   while (bl && !bl->isbreakable) {
+    struct GuardControl *gc = bl->gc;
     upval |= bl->upval;
+    if (gc) {
+      if (gc->inguard)
+        luaX_lexerror(ls, gc->isguard
+          ? "cannot break out of a guard"
+          : "cannot break out of a finalize", 0);
+      if (!gc->isguard) {
+        g_setresume(fs, gc, &gc->jdobreak);
+        luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+        return; /* no need for jump */
+      }
+      luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+    }
     bl = bl->previous;
   }
-  if (!bl)
+  /* must not close upvalues or trys if there is a finalize block */
+  for (loop = bl; loop && !loop->isbreakable; loop = loop->previous);
+  if (!loop)
     luaX_syntaxerror(ls, "no loop to break");
   if (upval)
     luaK_codeABC(fs, OP_CLOSE, bl->nactvar, 0, 0);
@@ -1162,6 +1189,109 @@ static void ifstat (LexState *ls, int line) {
 }
 
 
+/* set flow for after the finalize block (eg, to continue breaking) */
+static void g_setresume (FuncState *fs, struct GuardControl *gc, int *list) {
+  int pc = luaK_codeAsBx(fs, NUM_OPCODES, gc->statereg, NO_JUMP);
+  luaK_concat(fs, list, pc);
+  fs->f->lineinfo[pc] = gc->pcresume;
+}
+
+/* reads in the guard/finalize block */
+static void g_guard (FuncState *fs, struct GuardControl *gc, int line) {
+  int pctryenter;
+  int isguard = gc->isguard;
+  LexState *ls = fs->ls;
+  luaX_next(ls); /* skip "guard"/"finalize" */
+  gc->statereg = fs->freereg;
+  gc->jdobreak = NO_JUMP;  /* only used for finalizers */
+  gc->jdoreturn = NO_JUMP;
+  new_localvarliteral(ls, "(guard flow control)", 0);
+  new_localvarliteral(ls, "(guard error obj)", 1);
+  adjustlocalvars(ls, 2);
+  luaK_reserveregs(fs, 2);
+  pctryenter = luaK_codeAsBx(fs, OP_TRYENTER, gc->statereg, NO_JUMP);
+  if (isguard) /* unless there's an error, guards jump over the block */
+    luaK_jump(fs);
+  enterblock(fs, &gc->bl, 0); /* scope of variables inside block */
+  gc->bl.gc = gc;
+  gc->inguard = 1; /* returns/breaks not allowed */
+  block(ls);
+  check_match(ls, TK_END, isguard ? TK_GUARD : TK_FINALIZE, line);
+  leaveblock(fs);
+  gc->pcresume = luaK_codeAsBx(fs, OP_TRYRESUME, gc->statereg, NO_JUMP);
+  luaK_patchtohere(fs, pctryenter); /* set jump targets */
+  /* read in protected block*/
+  enterblock(fs, &gc->bl, 0); /* so that variables are closed correctly */
+  gc->bl.gc = gc;
+  gc->inguard = 0;
+  block(ls);
+  leaveblock(fs);
+  luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+  if (isguard) {
+    luaK_patchtohere(fs, pctryenter+1);
+    SETARG_Bx(fs->f->code[pctryenter], /* need to negate, to indicate a guard */
+      MAXARG_sBx-(GETARG_Bx(fs->f->code[pctryenter])-MAXARG_sBx));
+  }
+}
+
+static void guardstat (LexState *ls, int line) {
+  FuncState *fs = ls->fs;
+  struct GuardControl gc;
+  gc.isguard = 1;
+  g_guard(fs, &gc, line);
+}
+
+static void finalizestat (LexState *ls, int line) {
+  FuncState *fs = ls->fs;
+  struct GuardControl gc;
+  gc.isguard = 0;
+  g_guard(fs, &gc, line);
+  /* set jump target for any breaks */
+  if (gc.jdobreak != NO_JUMP) {
+    BlockCnt *bl = fs->bl;
+    while (!bl->isbreakable) {
+      if (bl->upval || bl->gc) {
+        /* close additional values/guards before jumping out of loop */
+        luaK_patchtohere(fs, gc.jdobreak);
+        breakstat(ls);
+        break;
+      }
+      bl = bl->previous;
+      lua_assert(bl); /* breaks should have been checked for validity */
+    }
+    if (bl->isbreakable) /* nothing to close, just concat lists */
+      luaK_concat(fs, &bl->breaklist, gc.jdobreak);
+  }
+  /* set jump target for any returns
+  ** at this point, tryreturn has placed any returns between the varargs
+  ** and the local variables */
+  if (gc.jdoreturn != NO_JUMP) {
+    int upval = 0;
+    BlockCnt *bl = fs->bl, *prev;
+    luaK_patchtohere(fs, gc.jdoreturn);
+    while (bl) {
+      if (bl->gc) {
+        if (!bl->gc->isguard) { /* need to chain to another finalizer */
+          if (upval) /* need to close upvalues from previous block */
+            luaK_codeABC(fs, OP_CLOSE, prev->nactvar, 0, 0);
+          g_setresume(fs, bl->gc, &bl->gc->jdoreturn);
+          luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+          goto chained; /* don't return; we're chaining two finalizers */
+        }
+        luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+      }
+      upval |= bl->upval;
+      prev = bl;
+      bl = bl->previous;
+    }
+    luaK_codeABC(fs, OP_TRYRETURN, 0, 0, 1); /* real return */
+  }
+  chained: /* it's a nested finalizer, don't actually return */
+  /* set jump target for normal program flow (no breaks/returns) */
+  luaK_patchtohere(fs, gc.pcresume);
+}
+
+
 static void localfunc (LexState *ls) {
   expdesc v, b;
   FuncState *fs = ls->fs;
@@ -1240,6 +1370,19 @@ static void retstat (LexState *ls) {
   FuncState *fs = ls->fs;
   expdesc e;
   int first, nret;  /* registers with returned values */
+  BlockCnt *bl = fs->bl, *finalizer = NULL, *prev = NULL;
+  int upval = 0;
+  while (bl) { /* are tailcalls allowed? */
+    if (bl->gc) {
+      if (bl->gc->inguard)
+        luaX_lexerror(ls, bl->gc->isguard
+          ? "cannot return from inside a guard"
+          : "cannot return from inside a finalizer", 0);
+      if (!finalizer && !bl->gc->isguard)
+        finalizer = bl;
+    }
+    bl = bl->previous;
+  }
   luaX_next(ls);  /* skip RETURN */
   if (block_follow(ls->t.token) || ls->t.token == ';')
     first = nret = 0;  /* return no values */
@@ -1247,7 +1390,7 @@ static void retstat (LexState *ls) {
     nret = explist1(ls, &e);  /* optional return values */
     if (hasmultret(e.k)) {
       luaK_setmultret(fs, &e);
-      if (e.k == VCALL && nret == 1) {  /* tail call? */
+      if (e.k == VCALL && nret == 1 && !finalizer) {  /* tail call? */
         SET_OPCODE(getcode(fs,&e), OP_TAILCALL);
         lua_assert(GETARG_A(getcode(fs,&e)) == fs->nactvar);
       }
@@ -1264,7 +1407,26 @@ static void retstat (LexState *ls) {
       }
     }
   }
-  luaK_ret(fs, first, nret);
+  bl = fs->bl;
+  while (bl) {
+    struct GuardControl *gc = bl->gc;
+    if (gc) {
+      if (bl == finalizer) {
+        if (upval)
+          luaK_codeABC(fs, OP_CLOSE, prev->nactvar, 0, 0);
+        g_setresume(fs, gc, &gc->jdoreturn);
+        lua_assert(nret < MAXARG_B); /* MAXARG_B indicates a real return */
+        luaK_ret(fs, first, nret, OP_TRYRETURN);
+        return;
+      }
+      luaK_codeABC(fs, OP_TRYCLOSE, 0, 0, 0);
+    }
+    upval |= bl->upval;
+    prev = bl;
+    bl = bl->previous;
+  }
+  lua_assert(!finalizer);
+  luaK_ret(fs, first, nret, OP_RETURN);
 }
 
 
@@ -1313,6 +1475,14 @@ static int statement (LexState *ls) {
       luaX_next(ls);  /* skip BREAK */
       breakstat(ls);
       return 1;  /* must be last statement */
+    }
+    case TK_FINALIZE: {
+      finalizestat(ls, ls->linenumber);
+      return 0;
+    }
+    case TK_GUARD: {
+      guardstat(ls, ls->linenumber);
+      return 0;
     }
     default: {
       exprstat(ls);

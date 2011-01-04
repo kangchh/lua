@@ -635,6 +635,7 @@ void luaV_execute (lua_State *L, int nexeccalls) {
       case OP_RETURN: {
         int b = GETARG_B(i);
         if (b != 0) L->top = ra+b-1;
+	  finallyreturn:
         if (L->openupval) luaF_close(L, base);
         L->savedpc = pc;
         b = luaD_poscall(L, ra);
@@ -736,20 +737,75 @@ void luaV_execute (lua_State *L, int nexeccalls) {
         Protect(luaC_checkGC(L));
         continue;
       }
+      case OP_TRYENTER: {
+        int errcode, isguard = 0;
+        int delta = GETARG_sBx(i);
+        if (delta < 0) { /* indicates a guard */
+          delta = -delta;
+          isguard = 1;
+        }
+        ra->value.p = cast(void *, 0);
+        ra->tt = LUA_TTRYFLOW;
+        L->savedpc = pc+delta;
+        errcode = luaD_pcall(L, &luaD_tryenter, NULL,
+          savestack(L, ra+1), 0);
+        base = L->base;
+        if (errcode == 0) continue;
+        L->top = L->ci->top; /* restore top */
+        ra = RA(i);
+        ra->tt = LUA_TNIL; /* set tryresume to rethrow */
+        ra->value.p = cast(void *, errcode);
+        if (isguard) pc++; /* skip jmp instruction */
+        continue;
+      }
+      case OP_TRYRETURN: {
+        if (GETARG_C(i)) { /* return previously stored values */
+          int actresults = L->ci->actresults;
+          L->top = L->ci->top = base;
+          L->ci->base = L->base = ra = base - actresults;
+          goto finallyreturn;
+        } else { /* move to beneath local vars */
+          luaD_tryreturn(L, ra, GETARG_B(i));
+          return;
+        }
+      }
+      /* runtime checks are required in case of stack modification */
+      /* believe checks to be ANSI c.. */
+      case OP_TRYRESUME: {
+        if (ra->tt == LUA_TTRYFLOW) {
+          ptrdiff_t offset = (ptrdiff_t)ra->value.p;
+          const Instruction *code = cl->p->code;
+          if (((offset > 0) && ((code+cl->p->sizecode)-pc > offset))
+           || ((offset < 0) && (pc-code <= -offset)))
+            pc += offset;
+          else
+            pc += GETARG_sBx(i);
+          continue;
+        } else { /* rethrow error */
+          L->top = ra+2;
+          luaD_throw(L, cast_int(ra->value.p));
+        }
+      }
+      case OP_TRYCLOSE: {
+        return;
+      }
       case OP_VARARG: {
         int b = GETARG_B(i) - 1;
         int j;
         CallInfo *ci = L->ci;
-        int n = cast_int(ci->base - ci->func) - cl->p->numparams - 1;
+        int n = cast_int(ci->base - ci->func) -
+          cl->p->numparams - ci->actresults - 1;
+        StkId base;
         if (b == LUA_MULTRET) {
           Protect(luaD_checkstack(L, n));
           ra = RA(i);  /* previous call may change the stack */
           b = n;
           L->top = ra + n;
         }
+        base = ci->base - ci->actresults;
         for (j = 0; j < b; j++) {
           if (j < n) {
-            setobjs2s(L, ra + j, ci->base - n + j);
+            setobjs2s(L, ra + j, base - n + j);
           }
           else {
             setnilvalue(ra + j);
