@@ -42,7 +42,7 @@ typedef struct BlockCnt {
   int breaklist;  /* list of jumps out of this loop */
   lu_byte nactvar;  /* # active locals outside the breakable structure */
   lu_byte upval;  /* true if some variable in the block is an upvalue */
-  lu_byte isbreakable;  /* true if `block' is a loop */
+  lu_byte isbreakable;  /* 0: normal block, 1: loop, 2: try, 3: finally */
 } BlockCnt;
 
 
@@ -300,7 +300,7 @@ static void leaveblock (FuncState *fs) {
   if (bl->upval)
     luaK_codeABC(fs, OP_CLOSE, bl->nactvar, 0, 0);
   /* a block either controls scope or breaks (never both) */
-  lua_assert(!bl->isbreakable || !bl->upval);
+  lua_assert(bl->isbreakable != 1|| !bl->upval);
   lua_assert(bl->nactvar == fs->nactvar);
   fs->freereg = fs->nactvar;  /* free registers */
   luaK_patchtohere(fs, bl->breaklist);
@@ -872,6 +872,7 @@ static int block_follow (int token) {
   switch (token) {
     case TK_ELSE: case TK_ELSEIF: case TK_END:
     case TK_UNTIL: case TK_EOS:
+    case TK_CATCH: case TK_FINALLY:
       return 1;
     default: return 0;
   }
@@ -976,7 +977,11 @@ static void breakstat (LexState *ls) {
   FuncState *fs = ls->fs;
   BlockCnt *bl = fs->bl;
   int upval = 0;
-  while (bl && !bl->isbreakable) {
+  while (bl && bl->isbreakable != 1) {
+    if (bl->isbreakable == 2)
+      luaK_codeABC(fs, OP_EXITTRY, 0, 0, 0);
+    else if (bl->isbreakable == 3)
+      luaX_syntaxerror(ls, "can't break in _finally_ clause");
     upval |= bl->upval;
     bl = bl->previous;
   }
@@ -1161,6 +1166,71 @@ static void ifstat (LexState *ls, int line) {
   check_match(ls, TK_END, TK_IF, line);
 }
 
+static void trystat (LexState *ls, int line) {
+  /* trystat -> TRY block CATCH err DO block END */
+  FuncState *fs = ls->fs;
+  BlockCnt bl;
+  int base, pc, escapelist = NO_JUMP;
+
+  luaX_next(ls);
+
+  enterblock(fs, &bl, 2);   /* try block */
+  base = fs->freereg;
+  new_localvarliteral(ls, "(error obj)", 0);
+  adjustlocalvars(ls, 1);  /* error object */
+  luaK_reserveregs(fs, 1);
+
+  pc = luaK_codeAsBx(fs, OP_TRY, base, NO_JUMP);
+  chunk(ls);
+
+  if (ls->t.token == TK_CATCH) {
+    TString *varname;
+    int errobj;
+
+    luaK_codeABC(fs, OP_EXITTRY, 0, 0, 0);
+    luaK_concat(fs, &escapelist, luaK_jump(fs));
+    SET_OPCODE(fs->f->code[pc], OP_TRYCATCH);   /* change it to TRYCATCH */
+    luaK_patchtohere(fs, pc);
+    bl.isbreakable = 0;
+
+    // local err
+    luaX_next(ls);  /* skip `catch' */
+    varname = str_checkname(ls);  /* first variable name */
+
+    // do
+    checknext(ls, TK_DO);
+    errobj = fs->freereg;
+    new_localvar(ls, varname, 0);
+    adjustlocalvars(ls, 1);
+    luaK_reserveregs(fs, 1);
+    luaK_codeABC(fs, OP_MOVE, errobj, base, 0);
+
+    block(ls);
+
+  } else if (ls->t.token == TK_FINALLY) {
+    luaK_codeABC(fs, OP_EXITTRY, 0, 0, 0);
+    luaK_concat(fs, &escapelist, luaK_jump(fs));
+    SET_OPCODE(fs->f->code[pc], OP_TRYFIN);   /* change it to TRYFIN */
+    luaK_patchtohere(fs, pc);
+    bl.isbreakable = 3;
+
+    luaX_next(ls);  /* skip 'finally' */
+
+    block(ls);
+
+    luaK_codeABC(fs, OP_RETFIN, base, 0, 0);  /* OP_ENDFIN jump to the return point */
+
+  } else {
+    luaK_codeABC(fs, OP_EXITTRY, 0, 0, 0);
+    luaK_concat(fs, &escapelist, pc);
+  }
+
+  leaveblock(fs);
+
+  luaK_patchtohere(fs, escapelist);
+  check_match(ls, TK_END, TK_TRY, line);
+}
+
 
 static void localfunc (LexState *ls) {
   expdesc v, b;
@@ -1238,8 +1308,11 @@ static void exprstat (LexState *ls) {
 static void retstat (LexState *ls) {
   /* stat -> RETURN explist */
   FuncState *fs = ls->fs;
+  BlockCnt *bl = fs->bl;
   expdesc e;
   int first, nret;  /* registers with returned values */
+  int ret_in_try = 0;
+
   luaX_next(ls);  /* skip RETURN */
   if (block_follow(ls->t.token) || ls->t.token == ';')
     first = nret = 0;  /* return no values */
@@ -1264,7 +1337,22 @@ static void retstat (LexState *ls) {
       }
     }
   }
-  luaK_ret(fs, first, nret);
+
+  /* before return, we should exit all try-catch blocks */
+  while (bl) {
+    if (bl->isbreakable == 2) {
+      if (ret_in_try)
+        luaK_codeABC(fs, OP_EXITTRY, 0, 0, 0);
+      else {
+        ret_in_try = 1;
+        luaK_codeABC(fs, OP_EXITTRY, first, nret+1, 1); /* here we will save all return values */
+      }
+    } else if (bl->isbreakable == 3)
+      luaX_syntaxerror(ls, "can't return in _finally_ clause");
+    bl = bl->previous;
+  }
+
+  luaK_codeABC(fs, OP_RETURN, first, nret+1, ret_in_try);
 }
 
 
@@ -1295,6 +1383,10 @@ static int statement (LexState *ls) {
     }
     case TK_FUNCTION: {
       funcstat(ls, line);  /* stat -> funcstat */
+      return 0;
+    }
+    case TK_TRY: {
+      trystat(ls, line);
       return 0;
     }
     case TK_LOCAL: {  /* stat -> localstat */

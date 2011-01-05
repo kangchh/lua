@@ -37,6 +37,11 @@ const char *const luaP_opnames[NUM_OPCODES+1] = {
   "LEN",
   "CONCAT",
   "JMP",
+  "TRY",
+  "TRYCATCH",
+  "TRYFINALLY",
+  "EXITTRY",
+  "RETFIN",
   "EQ",
   "LT",
   "LE",
@@ -83,6 +88,11 @@ const lu_byte luaP_opmodes[NUM_OPCODES] = {
  ,opmode(0, 1, OpArgR, OpArgN, iABC)		/* OP_LEN */
  ,opmode(0, 1, OpArgR, OpArgR, iABC)		/* OP_CONCAT */
  ,opmode(0, 0, OpArgR, OpArgN, iAsBx)		/* OP_JMP */
+ ,opmode(0, 0, OpArgR, OpArgN, iAsBx)		/* OP_TRY */
+ ,opmode(0, 1, OpArgR, OpArgN, iAsBx)		/* OP_TRYCATCH */
+ ,opmode(0, 0, OpArgR, OpArgN, iAsBx)		/* OP_TRYFIN */
+ ,opmode(0, 0, OpArgN, OpArgN, iABC)		/* OP_EXITTRY */
+ ,opmode(0, 0, OpArgN, OpArgN, iABC)		/* OP_RETFIN */
  ,opmode(1, 0, OpArgK, OpArgK, iABC)		/* OP_EQ */
  ,opmode(1, 0, OpArgK, OpArgK, iABC)		/* OP_LT */
  ,opmode(1, 0, OpArgK, OpArgK, iABC)		/* OP_LE */
