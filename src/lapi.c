@@ -258,15 +258,12 @@ LUA_API int lua_iscfunction (lua_State *L, int idx) {
 
 
 LUA_API int lua_isnumber (lua_State *L, int idx) {
-  TValue n;
-  const TValue *o = index2adr(L, idx);
-  return tonumber(o, &n);
+  return lua_type(L, idx) == LUA_TNUMBER;
 }
 
 
 LUA_API int lua_isstring (lua_State *L, int idx) {
-  int t = lua_type(L, idx);
-  return (t == LUA_TSTRING || t == LUA_TNUMBER);
+  return lua_type(L, idx) == LUA_TSTRING;
 }
 
 
@@ -373,13 +370,6 @@ LUA_API size_t lua_objlen (lua_State *L, int idx) {
     case LUA_TSTRING: return tsvalue(o)->len;
     case LUA_TUSERDATA: return uvalue(o)->len;
     case LUA_TTABLE: return luaH_getn(hvalue(o));
-    case LUA_TNUMBER: {
-      size_t l;
-      lua_lock(L);  /* `luaV_tostring' may create a new string */
-      l = (luaV_tostring(L, o) ? tsvalue(o)->len : 0);
-      lua_unlock(L);
-      return l;
-    }
     default: return 0;
   }
 }
