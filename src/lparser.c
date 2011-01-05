@@ -778,14 +778,6 @@ static void simpleexp (LexState *ls, expdesc *v) {
       body(ls, v, 0, ls->linenumber);
       return;
     }
-    case TK_FINALIZE: {
-      finalizestat(ls, ls->linenumber);
-      return 0;
-    }
-    case TK_GUARD: {
-      guardstat(ls, ls->linenumber);
-      return 0;
-    }
     default: {
       primaryexp(ls, v);
       return;
@@ -1293,8 +1285,8 @@ static void finalizestat (LexState *ls, int line) {
       bl = bl->previous;
     }
     luaK_codeABC(fs, OP_TRYRETURN, 0, 0, 1); /* real return */
-  chained: /* it's a nested finalizer, don't actually return */
   }
+  chained: /* it's a nested finalizer, don't actually return */
   /* set jump target for normal program flow (no breaks/returns) */
   luaK_patchtohere(fs, gc.pcresume);
 }
@@ -1465,6 +1457,14 @@ static int statement (LexState *ls) {
     }
     case TK_FUNCTION: {
       funcstat(ls, line);  /* stat -> funcstat */
+      return 0;
+    }
+    case TK_FINALIZE: {
+      finalizestat(ls, ls->linenumber);
+      return 0;
+    }
+    case TK_GUARD: {
+      guardstat(ls, ls->linenumber);
       return 0;
     }
     case TK_LOCAL: {  /* stat -> localstat */

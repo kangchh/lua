@@ -748,7 +748,7 @@ void luaV_execute (lua_State *L, int nexeccalls) {
         ra->tt = LUA_TTRYFLOW;
         L->savedpc = pc+delta;
         errcode = luaD_pcall(L, &luaD_tryenter, NULL,
-          savestack(L, ra+1), NULL);
+          savestack(L, ra+1), 0);
         base = L->base;
         if (errcode == 0) continue;
         L->top = L->ci->top; /* restore top */
