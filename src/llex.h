@@ -56,6 +56,12 @@ enum RESERVED {
   TK_GE,
   TK_LE,
   TK_NE,
+#if defined(LUA_BITWISE_OPERATORS)
+  TK_LSHFT,
+  TK_RSHFT,
+  TK_XOR,
+  TK_CNE,
+#endif
   TK_NUMBER,
   TK_NAME,
   TK_STRING,

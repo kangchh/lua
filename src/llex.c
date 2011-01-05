@@ -67,6 +67,12 @@ const char *const luaX_tokens [] = {
     ">=",
     "<=",
     "~=",
+#if defined(LUA_BITWISE_OPERATORS)
+    ">>",
+    "<<",
+    "^^",
+    "!=",
+#endif
     "<number>",
     "<name>",
     "<string>",
@@ -407,6 +413,30 @@ static int llex (LexState *ls, SemInfo *seminfo) {
         if (ls->current != '=') return '=';
         else { next(ls); return TK_EQ; }
       }
+#if defined(LUA_BITWISE_OPERATORS)
+      case '<': {
+        next(ls);
+        if (ls->current == '=') { next(ls); return TK_LE; }
+        else if (ls->current == '<') { next(ls); return TK_LSHFT; }
+        else  return '<';
+      }
+      case '>': {
+        next(ls);
+        if (ls->current == '=') { next(ls); return TK_GE; }
+        else if (ls->current == '>') { next(ls); return TK_RSHFT; }
+        else return '>';
+      }
+      case '^': {
+        next(ls);
+        if (ls->current != '^') return '^';
+        else { next(ls); return TK_XOR; }
+      }
+      case '!': {
+        next(ls);
+        if (ls->current != '=') return '!';
+        else { next(ls); return TK_NE; }
+      }
+#else
       case '<': {
         next(ls);
         if (ls->current != '=') return '<';
@@ -417,6 +447,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
         if (ls->current != '=') return '>';
         else { next(ls); return TK_GE; }
       }
+#endif
       case '~': {
         next(ls);
         if (ls->current != '=') return '~';
