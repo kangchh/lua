@@ -218,6 +218,19 @@
 
 
 /*
+@@ JH_LUA_BINOCTAL This simple patch adds octal and binary constants
+@* alongside hexadecimal which is already supported. These will be
+@* recognised in source code literals or in string contents converted
+@* implicitly or explicitly by 'tonumber'. Binary constants take the
+@* form '0b10101'. Octal constants take the form '0o176'. Upper-case
+@* radix specifier is also supported for consistency with the
+@* hexadecimal format but for obvious reasons it is not recommended
+@* for octal!
+*/
+#define LUA_BINOCTAL
+
+
+/*
 ** {==================================================================
 ** Stand-alone configuration
 ** ===================================================================
