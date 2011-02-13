@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <codelib/utf8.h>
+
 #define lbaselib_c
 #define LUA_LIB
 
@@ -34,15 +36,39 @@ static int luaB_print (lua_State *L) {
   lua_getglobal(L, "tostring");
   for (i=1; i<=n; i++) {
     const char *s;
+#ifdef LUA_USE_UTF8
+    size_t l;
+	wchar_t* ws;
+#endif
     lua_pushvalue(L, -1);  /* function to be called */
     lua_pushvalue(L, i);   /* value to print */
     lua_call(L, 1, 1);
+#ifdef LUA_USE_UTF8
+    s = lua_tolstring(L, -1, &l);
+#else
     s = lua_tostring(L, -1);  /* get result */
+#endif
     if (s == NULL)
       return luaL_error(L, LUA_QL("tostring") " must return a string to "
                            LUA_QL("print"));
     if (i>1) fputs("\t", stdout);
+#ifdef LUA_USE_UTF8
+    ws = utf8toucs2(s, l, NULL);
+    if (ws) {
+      fputws(ws, stdout);
+      ucs2free(ws);
+    } else {
+      size_t ll = l;
+      const char* ls = s;
+      fprintf(stdout, "!utf8[%d,%s,", ll, s);
+      while (l--) {
+        fprintf(stdout, "\\%d", (unsigned char)*s++);
+      }
+      fputs("]", stdout);
+    }
+#else
     fputs(s, stdout);
+#endif
     lua_pop(L, 1);  /* pop result */
   }
   fputs("\n", stdout);

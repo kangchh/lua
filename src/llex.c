@@ -485,12 +485,20 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           read_numeral(ls, seminfo);
           return TK_NUMBER;
         }
+#if defined(LUA_USE_UTF8)
+        else if (isalpha(ls->current) || isext(ls->current) || ls->current == '_') {
+#else
         else if (isalpha(ls->current) || ls->current == '_') {
+#endif
           /* identifier or reserved word */
           TString *ts;
           do {
             save_and_next(ls);
+#if defined(LUA_USE_UTF8)
+          } while (isalnum(ls->current) || isext(ls->current) || ls->current == '_');
+#else
           } while (isalnum(ls->current) || ls->current == '_');
+#endif
           ts = luaX_newstring(ls, luaZ_buffer(ls->buff),
                                   luaZ_bufflen(ls->buff));
           if (ts->tsv.reserved > 0)  /* reserved word? */

@@ -780,6 +780,14 @@ union luai_Cast { double l_d; long l_l; };
 #endif
 
 
+/*
+@@ LUA_USE_UTF8
+*/
+#define LUA_USE_UTF8
+#if defined(LUA_USE_UTF8)
+#define isext(c) (0x80 <= (c) && (c) <= 0xFF)
+#endif
+
 
 /* =================================================================== */
 
