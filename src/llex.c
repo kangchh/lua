@@ -38,7 +38,6 @@ const char *const luaX_tokens [] = {
     "and",
     "break",
     "catch",
-    "continue",
     "do",
     "else",
     "elseif",
